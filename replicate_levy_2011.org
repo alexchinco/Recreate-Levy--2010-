@@ -1,0 +1,895 @@
+#+LaTeX_CLASS: orgarticle
+
+#+TITLE:     Replicate Levy (2011)
+#+AUTHOR:    Alex Chinco
+
+#+LATEX_HEADER: \lstset{
+#+LATEX_HEADER: language=R,
+#+LATEX_HEADER: keywordstyle=\color{blue!80!black},
+#+LATEX_HEADER: commentstyle=\color{red!80!black},
+#+LATEX_HEADER: stringstyle=\color{green!80!black},
+#+LATEX_HEADER: basicstyle=\ttfamily\scriptsize,
+#+LATEX_HEADER: tabsize=4,
+#+LATEX_HEADER: backgroundcolor=\color{white!90!black},
+#+LATEX_HEADER: basewidth={0.5em,0.4em}
+#+LATEX_HEADER: }
+
+
+#+LATEX_HEADER: \RequirePackage{fancyvrb}
+#+LATEX_HEADER: \DefineVerbatimEnvironment{verbatim}{Verbatim}{fontsize=\small,formatcom={\color[rgb]{0.5,0,0}}}
+
+#+LANGUAGE:   en
+#+OPTIONS:    H:3 num:t toc:nil \n:nil @:t ::t |:t ^:t -:t f:t *:t TeX:t LaTeX:t skip:nil d:t timestamp:t tags:nil
+#+INFOJS_OPT: view:nil toc:nil ltoc:nil mouse:underline buttons:0 path:http://orgmode.org/org-info.js
+
+
+* Introduction
+
+  
+  #+LATEX: \
+
+
+
+* Define Main Function Call
+
+#+BEGIN_SRC R :results silent :eval no :tangle main__replicate_levy_2011.R
+  rm(list=ls())   
+  
+  
+  library(RColorBrewer)
+  library(foreign)
+  library(reshape)
+  library(plyr)
+  library(ggplot2)
+  library(matlab)
+  library(xtable)
+  library(tikzDevice)
+  library(maptools)
+  library(classInt)
+  library(maps)
+  library(plm)
+  library(igraph)
+  library(sp)
+  
+  
+  library(foreach)
+  library(doMC)
+  registerDoMC(2)
+  
+  
+  library(ReadImages)
+  library(RgoogleMaps)
+  library(MASS)
+  
+  
+  source("replicate_levy_2011.R")
+  
+  load_data()
+  
+  ## merge_data()
+  
+  ## plot_flow_difference_distribution()
+  
+  ## plot_population_flow_by_intercity_distance()
+  
+  ## plot_figure_3c()
+  
+  ## test_for_constant_coefficient()
+#+END_SRC
+
+  
+  #+LATEX: \
+  
+
+* Define Helper Functions
+
+  
+  #+LATEX: \
+       
+** Standardize County Codes
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  standardize_county_codes <- function(data, 
+                                       name
+                                       ) 
+  {
+
+  
+    data[,name]                 <- as.character(data[,name])
+    data                        <- data[nchar(data[,name]) >= 4,]
+    data$nchar                  <- nchar(data[,name])
+    data[data$nchar == 4, name] <- paste("0", data[nchar(data[,name]) == 4, name], sep = "")
+    data			<- data[, !(names(data) %in% c("nchar"))]
+
+  
+    return(data)
+
+  
+  }
+#+END_SRC
+
+
+   #+LATEX: \
+
+
+
+
+
+
+
+** Print Data Frame Summaries
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  print_df_summary <- function(data, 
+                               text
+                               ) 
+  {
+  
+    
+    for (i in 1:10) {
+      print("                                                  ")
+    }
+    for (i in 1:3) {
+      print("==================================================")
+    }
+  
+  
+    print(text)
+    print(dim(data))
+    print(head(data))
+    print(summary(data))
+  
+  
+    for (i in 1:3) {
+      print("==================================================")
+    }
+  
+    
+  }
+#+END_SRC  
+  
+  #+LATEX: \
+       
+
+
+
+** Balance Panel
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  balance_panel <- function(data) 
+  {
+  
+  
+    fips_list   <- sort(unique(data$i.into))
+    num_fips    <- length(fips_list)
+    n           <- 0
+  
+  
+    for (a in fips_list) {
+      temp_data <- data[data$i.into == a, ]
+      for (b in fips_list) {
+        if (length(temp_data[(temp_data$i.into == a) & (temp_data$i.from == b), ]$dN) == 0) {
+          data <- rbind(data, c(a,b,0))
+        }
+      }
+      n <- n + 1
+      print(n)
+    }
+    
+    
+    return(data)
+  
+    
+  }
+#+END_SRC  
+  
+  #+LATEX: \
+
+
+* Create Population Flow Data
+
+  
+  #+LATEX: \
+       
+** Load Data Sets
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  format_pop_level_data <- function(data
+                                    ) 
+  {
+    
+    
+    data        <- data[, c("V2", "V7")]
+    names(data) <- c("i", "N")
+    print_df_summary(data, "data")
+
+    
+    data <- data[is.na(data$N) == FALSE, ]
+    print_df_summary(data, "data")
+
+    
+    data <- standardize_county_codes(data, "i")
+    print_df_summary(data, "data")
+    
+    
+    return(data)
+    
+    
+  }  
+#+END_SRC
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  format_pop_flow_data <- function(data
+                                   ) 
+  {
+    
+    
+    names(data) <- c("i.into", "i.from", "dN")
+    data        <- standardize_county_codes(data, "i.into")
+    data        <- standardize_county_codes(data, "i.from")
+    ## data        <- balance_panel(data)
+    print_df_summary(data, "data")
+  
+    
+    data.agg_by_from <- ddply(data,
+                              c("i.from"),
+                              function(X)sum(X$dN)
+                              )
+    names(data.agg_by_from) <- c("i.from", "dN.agg_by_from")
+    data <- merge(data, 
+                  data.agg_by_from, 
+                  by    = c("i.from"), 
+                  all.x = TRUE
+                  )
+    print_df_summary(data, "data")
+  
+  
+    data.agg_by_into <- ddply(data,
+                              c("i.into"),
+                              function(X)sum(X$dN)
+                              )
+    names(data.agg_by_into) <- c("i.into", "dN.agg_by_into")
+    data <- merge(data, 
+                  data.agg_by_into, 
+                  by    = c("i.into"), 
+                  all.x = TRUE
+                  )
+    print_df_summary(data, "data")
+    
+  
+    return(data)
+    
+  
+  }  
+#+END_SRC
+
+   
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  format_coordinate_data <- function(data
+                                     ) 
+  {
+    
+    
+    data <- data[,c("FIPS", "LATITUDE", "LONGITUDE")]
+    names(data) <- c("i", "lat", "lon")
+    data <- standardize_county_codes(data, "i")
+    print_df_summary(data, "data")
+    
+    
+    return(data)
+  
+    
+  }  
+#+END_SRC
+
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  load_data <- function() 
+  {
+  
+    
+    data_dir                    <- "~/Dropbox/ra_work/population_flows/data/"
+    pop_level_file_name         <- paste(data_dir, "99C8_00.txt", sep="") 
+    pop_flow_file_name          <- paste(data_dir, "inflow.txt", sep="")
+    coordinate_file_name        <- paste(data_dir, "county_centroid.csv", sep="") 
+    clean_data_file_name        <- paste(data_dir, "clean_data.csv", sep="") 
+  
+  
+    pop_level   <- read.delim(pop_level_file_name, 
+                              sep       = " ", 
+                              header    = FALSE
+                              )
+    pop_level   <- format_pop_level_data(pop_level)
+
+    
+    pop_flow    <- read.delim(pop_flow_file_name, 
+                              sep       = " ", 
+                              header    = FALSE
+                              )
+    pop_flow    <- format_pop_flow_data(pop_flow)
+  
+  
+    coordinate  <- read.csv(coordinate_file_name, 
+                            stringsAsFactors = FALSE
+                            )
+    coordinate  <- format_coordinate_data(coordinate)
+  
+    
+    save(pop_level, 
+         pop_flow, 
+         coordinate,
+         file = clean_data_file_name
+         )
+    
+  
+  }
+#+END_SRC
+
+   
+   #+LATEX: \
+
+
+
+** Merge Data
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  merge_data <- function() 
+  {
+    
+    
+    data_dir <- "~/Dropbox/ra_work/population_flows/data/"
+    clean_data_file_name <- paste(data_dir, "clean_data.csv", sep="") 
+    merged_data_file_name <- paste(data_dir, "merged_data.csv", sep="") 
+    load(clean_data_file_name)
+    
+    
+    data <- pop_flow
+  
+  
+    names(pop_level) <- c("i.into", "N.into")
+    data <- merge(data, 
+                  pop_level, 
+                  by    = "i.into", 
+                  all.x = TRUE
+                  )
+    print_df_summary(data, "data")
+  
+  
+    names(pop_level) <- c("i.from", "N.from")
+    data <- merge(data, 
+                  pop_level, 
+                  by    = "i.from", 
+                  all.x = TRUE
+                  )
+    print_df_summary(data, "data")
+    
+    
+    names(coordinate) <- c("i.into", "lat.into", "lon.into")
+    data <- merge(data, 
+                  coordinate, 
+                  by    = "i.into", 
+                  all.x = TRUE
+                  )
+    print_df_summary(data, "data")
+  
+  
+    names(coordinate) <- c("i.from", "lat.from", "lon.from")
+    data <- merge(data, 
+                  coordinate, 
+                  by    = "i.from", 
+                  all.x = TRUE
+                  )
+    print_df_summary(data, "data")
+  
+  
+    ## Denali, AK is 02068
+    print(data[is.na(data$lon.into) == TRUE, ])
+    print(data[is.na(data$lon.from) == TRUE, ])
+    data <- data[is.na(data$lon.into) == FALSE, ] 
+    data <- data[is.na(data$lon.from) == FALSE, ]
+    print_df_summary(data, "data")
+  
+  
+    radius_of_earth <- 6371
+    data$lon_rad.from <- data$lon.from * pi/180
+    data$lat_rad.from <- data$lat.from * pi/180
+    data$lon_rad.into <- data$lon.into * pi/180
+    data$lat_rad.into <- data$lat.into * pi/180
+    data$d <- sin(data$lat_rad.from) * sin(data$lat_rad.into) + cos(data$lat_rad.from) * cos(data$lat_rad.into) * cos(abs(data$lon_rad.into - data$lon_rad.from))
+    data$r <- radius_of_earth * acos(data$d)
+    print_df_summary(data, "data")
+  
+    
+    save(data,
+         file = merged_data_file_name
+         )
+    
+    
+  }  
+#+END_SRC
+
+
+   #+LATEX: \
+
+
+* Create Summary Statistics
+
+** Plot Flow Difference Distribution
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  plot_flow_difference_distribution <- function() 
+  {
+    
+    data_dir <- "~/Dropbox/ra_work/population_flows/data/"
+    merged_data_file_name <- paste(data_dir, "merged_data.csv", sep="") 
+    load(merged_data_file_name)
+    print_df_summary(data, "data")
+  
+    
+    data.into           <- data[, c("i.into", "i.from", "dN")]
+    names(data.into)    <- c("a","b","dN_a_to_b")
+    data.from           <- data[, c("i.into", "i.from", "dN")]
+    names(data.from)    <- c("b","a","dN_b_to_a")
+    plot_data           <- merge(data.into, data.from, by = c("a","b"))
+    print_df_summary(plot_data, "plot_data")
+  
+    
+    plot_data$FD_a_to_b <- with(plot_data, 
+                                (dN_a_to_b - dN_b_to_a)/((dN_a_to_b + dN_b_to_a)/2)
+                                )
+    print_df_summary(plot_data, "plot_data")
+  
+  
+    RAW_FILE <- 'flow_difference_distribution'
+    TEX_FILE <- paste(RAW_FILE,'.tex',sep='')
+    PDF_FILE <- paste(RAW_FILE,'.pdf',sep='')
+    PNG_FILE <- paste(RAW_FILE,'.png',sep='')
+    
+    
+    tikz(file = TEX_FILE, height = 5, width = 9, standAlone=TRUE)
+    p <- ggplot(plot_data)
+    p <- p + geom_histogram(aes(x = FD_a_to_b),
+                            colour = "black",
+                            fill = "red",
+                            binwidth = 0.05
+                            )
+    p <- p + ylab('') + xlab('$FD_{a \\to b}$')
+    p <- p + opts(legend.position = "none")
+    print(p)
+    dev.off()
+    
+    
+    tools::texi2dvi(TEX_FILE, pdf = TRUE)
+    OS <- Sys.info()["sysname"]
+    if (OS == "Linux") {
+      system(paste('convert -density 450 ', file.path(PDF_FILE), ' ', file.path(PNG_FILE)))
+    } else if (OS == "Darwin") {
+      system(paste('sips -s format png', file.path(PDF_FILE), '--out', file.path(PNG_FILE)))
+    }
+    
+    
+  }
+#+END_SRC
+
+
+  #+LATEX: \
+
+
+   
+** Plot Population Flow by Inter-City Distance
+
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  plot_population_flow_by_intercity_distance <- function() 
+  {
+    
+    data_dir <- "~/Dropbox/ra_work/population_flows/data/"
+    merged_data_file_name <- paste(data_dir, "merged_data.csv", sep="") 
+    load(merged_data_file_name)
+    print_df_summary(data, "data")
+    
+    
+    plot_data           <- data[, c("i.into", "i.from", "dN", "N.into", "N.from", "r")]
+    names(plot_data)    <- c("b","a","dN_a_to_b","N_b","N_a","r")
+    plot_data$NN_ab     <- (plot_data$N_a / 10^6) * (plot_data$N_b / 10^5)
+    print_df_summary(plot_data, "plot_data")
+    
+    
+    plot_data$r_bucket <- NA
+    plot_data[plot_data$r < 220 & plot_data$r >= 180, ]$r_bucket <- "$r_S = 200km$"
+    plot_data[plot_data$r < 1100 & plot_data$r >= 900, ]$r_bucket <- "$r_M = 1000km$"
+    plot_data[plot_data$r < 2200 & plot_data$r >= 1800, ]$r_bucket <- "$r_L = 2000km$"
+    plot_data <- plot_data[is.na(plot_data$r_bucket) == FALSE, ]
+    print_df_summary(plot_data, "plot_data")
+  
+  
+    NN_quantiles <- quantile(plot_data$NN_ab, probs = seq(0,0.99,by=0.01))
+    plot_data$NN_bucket <- NA
+    for (q in 1:100) {
+      plot_data[plot_data$NN_ab >= NN_quantiles[q], ]$NN_bucket <- q
+    }
+    print_df_summary(plot_data, "plot_data")
+  
+    
+    plot_data <- ddply(plot_data,
+                       c("NN_bucket","r_bucket"),
+                       function(X)c(mean(X$NN_ab),mean(X$dN_a_to_b))
+                       )
+    names(plot_data) <- c("NNb","Group","NN_ab","dN_a_to_b")
+    
+  
+    RAW_FILE <- 'population_flow_by_intercity_distance'
+    TEX_FILE <- paste(RAW_FILE,'.tex',sep='')
+    PDF_FILE <- paste(RAW_FILE,'.pdf',sep='')
+    PNG_FILE <- paste(RAW_FILE,'.png',sep='')
+    
+    
+    tikz(file = TEX_FILE, height = 5, width = 9, standAlone=TRUE)
+    p <- ggplot(plot_data)
+    p <- p + geom_point(aes(x = NN_ab,
+                            y = dN_a_to_b,
+                            group = Group,
+                            colour = Group
+                            )
+                        )
+    p <- p + ylim(0,180) + xlim(0,4)
+    p <- p + ylab('$N_{a \\to b}$') + xlab('$N_a \\cdot N_b$')
+    ## p <- p + opts(legend.position = "none")
+    print(p)
+    dev.off()
+    
+    
+    tools::texi2dvi(TEX_FILE, pdf = TRUE)
+    OS <- Sys.info()["sysname"]
+    if (OS == "Linux") {
+      system(paste('convert -density 450 ', file.path(PDF_FILE), ' ', file.path(PNG_FILE)))
+    } else if (OS == "Darwin") {
+      system(paste('sips -s format png', file.path(PDF_FILE), '--out', file.path(PNG_FILE)))
+    }
+    
+    
+  }
+#+END_SRC
+
+
+** Plot Population on Geographic Map
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  map_population_density <- function() 
+  {
+  
+    
+    theme_set(theme_bw())
+    
+    coordinate_center     <- c(lat = 40.10, lon = -98.21)
+    api_password          <- 'ABQIAAAAApOGCiHZBMN4dWGDkQd_tRRoMLGjhv3HK_HxlXkHLj37JJRNhhTePnO0HxvZTaqulaHmu0XziRfbJA'
+    color_type            <- c('color','bw')[1]
+    rgb_coefficients      <- c(0, 1, 0)
+    zoom_level            <- 4
+    map_type              <- 'satellite'
+    google_map            <- 'GoogleMap.jpg'
+    number_of_pixels      <- 640
+    
+    GetMap(api_password,
+           center   = coordinate_center[c('lat','lon')], 
+           size     = c(number_of_pixels, number_of_pixels),
+           zoom     = zoom_level,
+           format   = 'jpg', 
+           maptype  = map_type,
+           destfile = google_map,
+           sensor   = "true&key="
+           )
+    
+    google_map_color_matrix <- read.jpeg(google_map)
+    google_map_color_matrix <- apply(google_map_color_matrix, 
+                                     1:2, 
+                                     function(v)rgb(v[1], v[2], v[3])
+                                     )       
+    
+    google_map_information_list <- list(lat    = coordinate_center['lat'], 
+                                        lon    = coordinate_center['lon'], 
+                                        zoom   = zoom_level, 
+                                        google_map_color_matrix
+                                        )
+    
+    
+    centered_xy_coordinates <- LatLon2XY.centered(google_map_information_list, 
+                                                  coordinate_center['lat'], 
+                                                  coordinate_center['lon']
+                                                  )
+    coordinate_index <- (-number_of_pixels/2):(number_of_pixels/2 - 1)
+          
+          
+    create_latitude_values_from_index  <- function(x) {
+      XY2LatLon(google_map_information_list, 
+                -number_of_pixels/2, 
+                x
+                )[1]
+    }
+    create_longitude_values_from_index <- function(y) { 
+      XY2LatLon(google_map_information_list, 
+                y, 
+                -number_of_pixels/2
+                )[2]
+    }
+          
+          
+    latitudes <- apply(data.frame(coordinate_index), 
+                       1, 
+                       create_latitude_values_from_index
+                       )  
+    longitudes <- apply(data.frame(coordinate_index), 
+                        1, 
+                        create_longitude_values_from_index
+                        )
+    
+    
+    google_map_color_data_frame        <- melt(google_map_color_matrix)
+    names(google_map_color_data_frame) <- c('x','y','fill')
+    google_map_color_data_frame        <- within(google_map_color_data_frame,
+                                                 {
+                                                   x <- x - number_of_pixels/2 - 1
+                                                   y <- y - number_of_pixels/2 - 1
+                                                 }
+                                                 )   
+    
+    
+    xy_coordinates <- expand.grid(x = coordinate_index, 
+                                  y = coordinate_index
+                                  )
+    latitudes_and_longitudes <- expand.grid(lat = rev(latitudes), 
+                                            lon = longitudes
+                                            )
+    
+  
+    map_data  <- data.frame(xy_coordinates, latitudes_and_longitudes)  
+    map_data  <- suppressMessages(join(map_data, 
+                                       google_map_color_data_frame, 
+                                       type = 'right'
+                                       )
+                                  )
+    
+    
+    map_data    <- map_data[,c('lon','lat','fill')]
+    lat_range   <- range(map_data$lat)
+    lon_range   <- range(map_data$lon)
+    
+  
+  
+    theme_nothing <- function (base_size = 12){
+      
+      structure(list(axis.line            = theme_blank(), 
+                     axis.text.x          = theme_blank(), axis.text.y = theme_blank(),
+                     axis.ticks           = theme_blank(), 
+                     axis.title.x         = theme_blank(), axis.title.y = theme_blank(), 
+                     axis.ticks.length    = unit(0, "lines"), axis.ticks.margin = unit(0, "lines"), 
+                     legend.position      = "none", 
+                     panel.background     = theme_rect(fill = 'white'), 
+                     panel.border         = theme_blank(), 
+                     panel.grid.major     = theme_blank(), panel.grid.minor = theme_blank(), 
+                     panel.margin         = unit(0, "lines"), 
+                     plot.background      = theme_rect(colour = 'white'), 
+                     plot.title           = theme_text(size = base_size * 1.2), 
+                     plot.margin          = unit(c(-1, -1, -1.5, -1.5), "lines")), 
+                class = "options"
+                )
+      
+    }
+  
+    
+    vplayout <- function(x, y) {
+      
+      viewport(layout.pos.row = x, layout.pos.col = y)
+      
+    }
+    
+  
+    png(file = "Map__USA__PopulationDensity.png", height=1000, width=1000)
+    
+    p   <- ggplot()
+    p   <- p + geom_tile(aes(x = lon, y = lat, fill = fill), data = map_data)
+    p   <- p + scale_x_continuous('lon', limits = lon_range) + scale_y_continuous('lat', limits = lat_range)
+    p   <- p + scale_alpha(to = c(0, .9))
+    p   <- p + scale_fill_identity()
+    p   <- p + opts(legend.position = 'none')
+    p   <- p + ylab('') + xlab('')
+    p   <- p + coord_equal()
+    print(p)
+    
+    dev.off()
+    
+    
+  }
+#+END_SRC
+
+
+   #+LATEX: \
+
+
+
+* Estimate Flow vs. Distance Relationship
+
+** Plot Figure 3(c)
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  plot_figure_3c <- function() 
+  {
+  
+    
+    data_dir <- "~/Dropbox/ra_work/population_flows/data/"
+    merged_data_file_name <- paste(data_dir, "merged_data.csv", sep="") 
+    load(merged_data_file_name)
+    print_df_summary(data, "data")
+    
+  
+    reg_data            <- data[,c("i.into","i.from","N.into","N.from","r")]
+    names(reg_data)     <- c("a","b","N_a","N_b","r")
+    data.into           <- data[, c("i.into", "i.from", "dN")]
+    names(data.into)    <- c("a","b","dN_a_to_b")
+    reg_data            <- merge(reg_data, data.into, by = c("a","b"))
+    data.from           <- data[, c("i.into", "i.from", "dN")]
+    names(data.from)    <- c("b","a","dN_b_to_a")
+    reg_data            <- merge(reg_data, data.from, by = c("a","b"))
+    print_df_summary(reg_data, "reg_data")
+    
+  
+    reg_data$y          <- log(reg_data$dN_a_to_b) - log(reg_data$N_a) - log(reg_data$N_b) 
+    reg_data$log_r      <- log(reg_data$r)
+    print_df_summary(reg_data, "reg_data")
+  
+  
+    reg <- lm(y ~ log_r, data = reg_data)
+    print(summary(reg))
+  
+  
+    reg_data <- reg_data[reg_data$r < 2000, ]
+    reg_data <- reg_data[reg_data$r >= 200, ]
+  
+    
+    reg <- lm(y ~ log_r, data = reg_data)
+    print(summary(reg))
+    
+    
+    r_quantiles <- quantile(reg_data$r, probs = c(0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.60, 0.80))
+    reg_data$rb <- NA
+    for (q in 1:10) {
+      reg_data[reg_data$r >= r_quantiles[q], ]$rb <- q
+    }
+    reg_data <- ddply(reg_data,
+                      c("rb"),
+                      function(X)c(mean(X$r),
+                                   mean(X$y),
+                                   mean(X$y) + 2 * sd(X$y),
+                                   mean(X$y) - 2 * sd(X$y)
+                                   )
+                      )
+    names(reg_data) <- c("rb", "r", "y", "ub", "lb")
+    reg_data$log_r <- log(reg_data$r)
+    print_df_summary(reg_data, "reg_data")
+  
+  
+    reg <- lm(y ~ log_r, data = reg_data)
+    print(summary(reg))
+    est_intercept <- reg$coef[1]
+    est_slope <- reg$coef[2]
+  
+  
+    RAW_FILE <- 'figure_3c'
+    TEX_FILE <- paste(RAW_FILE,'.tex',sep='')
+    PDF_FILE <- paste(RAW_FILE,'.pdf',sep='')
+    PNG_FILE <- paste(RAW_FILE,'.png',sep='')
+    
+    
+    tikz(file = TEX_FILE, height = 5, width = 9, standAlone=TRUE)
+    p <- ggplot(reg_data)
+    p <- p + geom_point(aes(x = log_r,
+                            y = y
+                            ),
+                        colour = "blue",
+                        size = 3
+                        )
+    p <- p + geom_point(aes(x = log_r,
+                            y = ub
+                            ),
+                        colour = "red",
+                        size = 1.5
+                        )
+    p <- p + geom_point(aes(x = log_r,
+                            y = lb
+                            ),
+                        colour = "red",
+                        size = 1.5
+                        )
+    p <- p + geom_abline(intercept = est_intercept,
+                         slope = est_slope,
+                         colour = "black",
+                         size = 0.50,
+                         linetype = 4
+                         )
+    p <- p + ylab('$\\ln \\frac{N_{a \\to b}}{N_a \\cdot N_b}$') + xlab('$\\ln r_{ab}$')
+    ## p <- p + opts(legend.position = "none")
+    print(p)
+    dev.off()
+    
+    
+    tools::texi2dvi(TEX_FILE, pdf = TRUE)
+    OS <- Sys.info()["sysname"]
+    if (OS == "Linux") {
+      system(paste('convert -density 450 ', file.path(PDF_FILE), ' ', file.path(PNG_FILE)))
+    } else if (OS == "Darwin") {
+      system(paste('sips -s format png', file.path(PDF_FILE), '--out', file.path(PNG_FILE)))
+    }
+  
+  
+  }
+#+END_SRC
+
+
+** Test for Constant Coefficient
+
+#+BEGIN_SRC R :results silent :eval no :tangle replicate_levy_2011.R
+  test_for_constant_coefficient <- function() 
+  {
+  
+    
+    data_dir <- "~/Dropbox/ra_work/population_flows/data/"
+    merged_data_file_name <- paste(data_dir, "merged_data.csv", sep="") 
+    load(merged_data_file_name)
+    print_df_summary(data, "data")
+    
+  
+    reg_data            <- data[,c("i.into","i.from","N.into","N.from","r")]
+    names(reg_data)     <- c("a","b","N_a","N_b","r")
+    data.into           <- data[, c("i.into", "i.from", "dN")]
+    names(data.into)    <- c("a","b","dN_a_to_b")
+    reg_data            <- merge(reg_data, data.into, by = c("a","b"))
+    data.from           <- data[, c("i.into", "i.from", "dN")]
+    names(data.from)    <- c("b","a","dN_b_to_a")
+    reg_data            <- merge(reg_data, data.from, by = c("a","b"))
+    print_df_summary(reg_data, "reg_data")
+    
+  
+    reg_data$y          <- log(reg_data$dN_a_to_b + reg_data$dN_b_to_a)
+    reg_data$x <-  log(reg_data$N_a) + log(reg_data$N_b) 
+    reg_data$log_r      <- log(reg_data$r)
+    print_df_summary(reg_data, "reg_data")
+  
+  
+    reg <- lm(y ~ x + log_r, data = reg_data)
+    print(summary(reg))
+  
+  
+    reg_data <- reg_data[reg_data$r < 2000, ]
+    reg_data <- reg_data[reg_data$r >= 200, ]
+  
+    
+    reg <- lm(y ~ x + log_r, data = reg_data)
+    print(summary(reg))
+    
+    
+    r_quantiles <- quantile(reg_data$r, probs = c(0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.60, 0.80))
+    reg_data$rb <- NA
+    for (q in 1:10) {
+      reg_data[reg_data$r >= r_quantiles[q], ]$rb <- q
+    }
+    reg_data <- ddply(reg_data,
+                      c("rb"),
+                      function(X)c(mean(X$r),
+                                   mean(X$x),
+                                   mean(X$y),
+                                   mean(X$y) + 2 * sd(X$y),
+                                   mean(X$y) - 2 * sd(X$y)
+                                   )
+                      )
+    names(reg_data) <- c("rb", "r", "x", "y", "ub", "lb")
+    reg_data$log_r <- log(reg_data$r)
+    print_df_summary(reg_data, "reg_data")
+  
+  
+    reg <- lm(y ~ x + log_r, data = reg_data)
+    print(summary(reg))
+  
+  
+  }
+#+END_SRC
+
